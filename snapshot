@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+TMPDIR=$(mktemp -d)
+
+git clone https://github.com/golang/net $TMPDIR
+
+pushd $TMPDIR
+
+# 2023-12-19
+git checkout f12db26b1c9293fa3eb95c936e548d2c1fba4ba9
+
+cp -r $TMPDIR/internal/quic/* .
+
+go mod tidy
