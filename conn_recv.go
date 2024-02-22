@@ -13,11 +13,28 @@ import (
 	"time"
 )
 
-func (c *Conn) handleDatagram(now time.Time, dgram *datagram) {
+func (c *Conn) handleDatagram(now time.Time, dgram *datagram) (handled bool) {
+	if !c.localAddr.IsValid() {
+		// We don't have any way to tell in the general case what address we're
+		// sending packets from. Set our address from the destination address of
+		// the first packet received from the peer.
+		c.localAddr = dgram.localAddr
+	}
+	if dgram.peerAddr.IsValid() && dgram.peerAddr != c.peerAddr {
+		if c.side == clientSide {
+			// "If a client receives packets from an unknown server address,
+			// the client MUST discard these packets."
+			// https://www.rfc-editor.org/rfc/rfc9000#section-9-6
+			return false
+		}
+		// We currently don't support connection migration,
+		// so for now the server also drops packets from an unknown address.
+		return false
+	}
 	buf := dgram.b
 	c.loss.datagramReceived(now, len(buf))
 	if c.isDraining() {
-		return
+		return false
 	}
 	for len(buf) > 0 {
 		var n int
@@ -27,7 +44,7 @@ func (c *Conn) handleDatagram(now time.Time, dgram *datagram) {
 			if c.side == serverSide && len(dgram.b) < paddedInitialDatagramSize {
 				// Discard client-sent Initial packets in too-short datagrams.
 				// https://www.rfc-editor.org/rfc/rfc9000#section-14.1-4
-				return
+				return false
 			}
 			n = c.handleLongHeader(now, ptype, initialSpace, c.keysInitial.r, buf)
 		case packetTypeHandshake:
@@ -36,10 +53,10 @@ func (c *Conn) handleDatagram(now time.Time, dgram *datagram) {
 			n = c.handle1RTT(now, buf)
 		case packetTypeRetry:
 			c.handleRetry(now, buf)
-			return
+			return true
 		case packetTypeVersionNegotiation:
 			c.handleVersionNegotiation(now, buf)
-			return
+			return true
 		default:
 			n = -1
 		}
@@ -56,14 +73,17 @@ func (c *Conn) handleDatagram(now time.Time, dgram *datagram) {
 			if len(buf) == len(dgram.b) && len(buf) > statelessResetTokenLen {
 				var token statelessResetToken
 				copy(token[:], buf[len(buf)-len(token):])
-				c.handleStatelessReset(now, token)
+				if c.handleStatelessReset(now, token) {
+					return true
+				}
 			}
 			// Invalid data at the end of a datagram is ignored.
-			break
+			return false
 		}
 		c.idleHandlePacketReceived(now)
 		buf = buf[n:]
 	}
+	return true
 }
 
 func (c *Conn) handleLongHeader(now time.Time, ptype packetType, space numberSpace, k fixedKeys, buf []byte) int {
@@ -192,7 +212,7 @@ func (c *Conn) handleRetry(now time.Time, pkt []byte) {
 	c.connIDState.handleRetryPacket(p.srcConnID)
 	// We need to resend any data we've already sent in Initial packets.
 	// We must not reuse already sent packet numbers.
-	c.loss.discardPackets(initialSpace, c.handleAckOrLoss)
+	c.loss.discardPackets(initialSpace, c.log, c.handleAckOrLoss)
 	// TODO: Discard 0-RTT packets as well, once we support 0-RTT.
 }
 
@@ -416,7 +436,7 @@ func (c *Conn) handleAckFrame(now time.Time, space numberSpace, payload []byte) 
 	if c.peerAckDelayExponent >= 0 {
 		delay = ackDelay.Duration(uint8(c.peerAckDelayExponent))
 	}
-	c.loss.receiveAckEnd(now, space, delay, c.handleAckOrLoss)
+	c.loss.receiveAckEnd(now, c.log, space, delay, c.handleAckOrLoss)
 	if space == appDataSpace {
 		c.keysAppData.handleAckFor(largest)
 	}
@@ -562,10 +582,11 @@ func (c *Conn) handleHandshakeDoneFrame(now time.Time, space numberSpace, payloa
 
 var errStatelessReset = errors.New("received stateless reset")
 
-func (c *Conn) handleStatelessReset(now time.Time, resetToken statelessResetToken) {
+func (c *Conn) handleStatelessReset(now time.Time, resetToken statelessResetToken) (valid bool) {
 	if !c.connIDState.isValidStatelessResetToken(resetToken) {
-		return
+		return false
 	}
 	c.setFinalError(errStatelessReset)
 	c.enterDraining(now)
+	return true
 }

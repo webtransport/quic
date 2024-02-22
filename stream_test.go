@@ -100,6 +100,7 @@ func TestStreamWriteBlockedByStreamFlowControl(t *testing.T) {
 		if err != nil {
 			t.Fatalf("write with available output buffer: unexpected error: %v", err)
 		}
+		s.Flush()
 		tc.wantFrame("write blocked by flow control triggers a STREAM_DATA_BLOCKED frame",
 			packetType1RTT, debugFrameStreamDataBlocked{
 				id:  s.id,
@@ -111,6 +112,7 @@ func TestStreamWriteBlockedByStreamFlowControl(t *testing.T) {
 		if err != nil {
 			t.Fatalf("write with available output buffer: unexpected error: %v", err)
 		}
+		s.Flush()
 		tc.wantIdle("adding more blocked data does not trigger another STREAM_DATA_BLOCKED")
 
 		// Provide some flow control window.
@@ -534,6 +536,32 @@ func TestStreamReceiveDuplicateDataDoesNotViolateLimits(t *testing.T) {
 				data: make([]byte, maxData),
 			})
 			tc.wantIdle(fmt.Sprintf("conn sends no frames after receiving data frame %v", i))
+		}
+	})
+}
+
+func TestStreamReceiveEmptyEOF(t *testing.T) {
+	// A stream receives some data, we read a byte of that data
+	// (causing the rest to be pulled into the s.inbuf buffer),
+	// and then we receive a FIN with no additional data.
+	testStreamTypes(t, "", func(t *testing.T, styp streamType) {
+		tc, s := newTestConnAndRemoteStream(t, serverSide, styp, permissiveTransportParameters)
+		want := []byte{1, 2, 3}
+		tc.writeFrames(packetType1RTT, debugFrameStream{
+			id:   s.id,
+			data: want,
+		})
+		if got, err := s.ReadByte(); got != want[0] || err != nil {
+			t.Fatalf("s.ReadByte() = %v, %v; want %v, nil", got, err, want[0])
+		}
+
+		tc.writeFrames(packetType1RTT, debugFrameStream{
+			id:  s.id,
+			off: 3,
+			fin: true,
+		})
+		if got, err := io.ReadAll(s); !bytes.Equal(got, want[1:]) || err != nil {
+			t.Fatalf("io.ReadAll(s) = {%x}, %v; want {%x}, nil", got, err, want[1:])
 		}
 	})
 }
@@ -1156,8 +1184,8 @@ func TestStreamPeerResetsWithUnreadAndUnsentData(t *testing.T) {
 			code:      sentCode,
 		})
 		wantErr := StreamErrorCode(sentCode)
-		if n, err := s.Read(got); n != 0 || !errors.Is(err, wantErr) {
-			t.Fatalf("Read reset stream: got %v, %v; want 0, %v", n, err, wantErr)
+		if _, err := io.ReadAll(s); !errors.Is(err, wantErr) {
+			t.Fatalf("Read reset stream: ReadAll got error %v; want %v", err, wantErr)
 		}
 	})
 }
@@ -1323,7 +1351,6 @@ func TestStreamFlushImplicitExact(t *testing.T) {
 				id:   s.id,
 				data: want[0:4],
 			})
-
 	})
 }
 

@@ -12,7 +12,6 @@ import (
 	"crypto/tls"
 	"io"
 	"log/slog"
-	"net"
 	"net/netip"
 	"testing"
 	"time"
@@ -63,7 +62,7 @@ func TestStreamTransfer(t *testing.T) {
 	}
 }
 
-func newLocalConnPair(t *testing.T, conf1, conf2 *Config) (clientConn, serverConn *Conn) {
+func newLocalConnPair(t testing.TB, conf1, conf2 *Config) (clientConn, serverConn *Conn) {
 	t.Helper()
 	ctx := context.Background()
 	e1 := newLocalEndpoint(t, serverSide, conf1)
@@ -79,7 +78,7 @@ func newLocalConnPair(t *testing.T, conf1, conf2 *Config) (clientConn, serverCon
 	return c2, c1
 }
 
-func newLocalEndpoint(t *testing.T, side connSide, conf *Config) *Endpoint {
+func newLocalEndpoint(t testing.TB, side connSide, conf *Config) *Endpoint {
 	t.Helper()
 	if conf.TLSConfig == nil {
 		newConf := *conf
@@ -190,13 +189,9 @@ func (te *testEndpoint) writeDatagram(d *testDatagram) {
 	for len(buf) < d.paddedSize {
 		buf = append(buf, 0)
 	}
-	addr := d.addr
-	if !addr.IsValid() {
-		addr = testClientAddr
-	}
 	te.write(&datagram{
-		b:    buf,
-		addr: addr,
+		b:        buf,
+		peerAddr: d.addr,
 	})
 }
 
@@ -303,25 +298,24 @@ func (te *testEndpointUDPConn) Close() error {
 	return nil
 }
 
-func (te *testEndpointUDPConn) LocalAddr() net.Addr {
-	return net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:443"))
+func (te *testEndpointUDPConn) LocalAddr() netip.AddrPort {
+	return netip.MustParseAddrPort("127.0.0.1:443")
 }
 
-func (te *testEndpointUDPConn) ReadMsgUDPAddrPort(b, control []byte) (n, controln, flags int, _ netip.AddrPort, _ error) {
+func (te *testEndpointUDPConn) Read(f func(*datagram)) {
 	for {
 		select {
 		case d, ok := <-te.recvc:
 			if !ok {
-				return 0, 0, 0, netip.AddrPort{}, io.EOF
+				return
 			}
-			n = copy(b, d.b)
-			return n, 0, 0, d.addr, nil
+			f(d)
 		case <-te.idlec:
 		}
 	}
 }
 
-func (te *testEndpointUDPConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
-	te.sentDatagrams = append(te.sentDatagrams, append([]byte(nil), b...))
-	return len(b), nil
+func (te *testEndpointUDPConn) Write(dgram datagram) error {
+	te.sentDatagrams = append(te.sentDatagrams, append([]byte(nil), dgram.b...))
+	return nil
 }
