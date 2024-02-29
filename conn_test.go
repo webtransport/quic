@@ -168,6 +168,7 @@ type testConn struct {
 	sentDatagrams [][]byte
 	sentPackets   []*testPacket
 	sentFrames    []debugFrame
+	lastDatagram  *testDatagram
 	lastPacket    *testPacket
 
 	recvDatagram chan *datagram
@@ -241,8 +242,10 @@ func newTestConn(t *testing.T, side connSide, opts ...any) *testConn {
 	endpoint.configTestConn = configTestConn
 	conn, err := endpoint.e.newConn(
 		endpoint.now,
+		config,
 		side,
 		cids,
+		"",
 		netip.MustParseAddrPort("127.0.0.1:443"))
 	if err != nil {
 		t.Fatal(err)
@@ -576,6 +579,7 @@ func (tc *testConn) readDatagram() *testDatagram {
 		}
 		p.frames = frames
 	}
+	tc.lastDatagram = d
 	return d
 }
 

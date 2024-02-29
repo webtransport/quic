@@ -18,6 +18,7 @@ import (
 func TestUDPSourceUnspecified(t *testing.T) {
 	// Send datagram with no source address set.
 	runUDPTest(t, func(t *testing.T, test udpTest) {
+		t.Logf("%v", test.dstAddr)
 		data := []byte("source unspecified")
 		if err := test.src.Write(datagram{
 			b:        data,
@@ -121,6 +122,18 @@ func runUDPTest(t *testing.T, f func(t *testing.T, u udpTest)) {
 			spec = "unspec"
 		}
 		t.Run(fmt.Sprintf("%v/%v/%v", test.srcNet, test.dstNet, spec), func(t *testing.T) {
+			// See: https://go.googlesource.com/go/+/refs/tags/go1.22.0/src/net/ipsock.go#47
+			// On these platforms, conns with network="udp" cannot accept IPv6.
+			switch runtime.GOOS {
+			case "dragonfly", "openbsd":
+				if test.srcNet == "udp6" && test.dstNet == "udp" {
+					t.Skipf("%v: no support for mapping IPv4 address to IPv6", runtime.GOOS)
+				}
+			}
+			if runtime.GOARCH == "wasm" && test.srcNet == "udp6" {
+				t.Skipf("%v: IPv6 tests fail when using wasm fake net", runtime.GOARCH)
+			}
+
 			srcAddr := netip.AddrPortFrom(netip.MustParseAddr(test.srcAddr), 0)
 			srcConn, err := net.ListenUDP(test.srcNet, net.UDPAddrFromAddrPort(srcAddr))
 			if err != nil {

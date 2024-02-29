@@ -6,10 +6,10 @@ git pull
 
 popd
 
-cp -r net/internal/quic/* .
+cp -r net/quic/* .
 
 git grep golang.org/x/net\
-/internal/quic | cut -d : -f 1 | grep -v README.md | xargs -L1 sed -i -e s,golang.org/x/net\
-/internal/quic,github.com/webtransport/quic,g
+/quic | cut -d : -f 1 | grep -v README.md | xargs -L1 sed -i -e s,golang.org/x/net\
+/quic,github.com/webtransport/quic,g
 
 go mod tidy

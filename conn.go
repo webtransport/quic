@@ -37,6 +37,7 @@ type Conn struct {
 	connIDState connIDState
 	loss        lossState
 	streams     streamsState
+	path        pathState
 
 	// Packet protection keys, CRYPTO streams, and TLS state.
 	keysInitial   fixedKeyPair
@@ -93,7 +94,7 @@ type newServerConnIDs struct {
 	retrySrcConnID    []byte // source from server's Retry
 }
 
-func newConn(now time.Time, side connSide, cids newServerConnIDs, peerAddr netip.AddrPort, config *Config, e *Endpoint) (conn *Conn, _ error) {
+func newConn(now time.Time, side connSide, cids newServerConnIDs, peerHostname string, peerAddr netip.AddrPort, config *Config, e *Endpoint) (conn *Conn, _ error) {
 	c := &Conn{
 		side:                 side,
 		endpoint:             e,
@@ -145,7 +146,7 @@ func newConn(now time.Time, side connSide, cids newServerConnIDs, peerAddr netip
 	c.lifetimeInit()
 	c.restartIdleTimer(now)
 
-	if err := c.startTLS(now, initialConnID, transportParameters{
+	if err := c.startTLS(now, initialConnID, peerHostname, transportParameters{
 		initialSrcConnID:               c.connIDState.srcConnID(),
 		originalDstConnID:              cids.originalDstConnID,
 		retrySrcConnID:                 cids.retrySrcConnID,
