@@ -2,7 +2,7 @@
 
 pushd net
 
-git pull
+git pull origin master
 
 popd
 
